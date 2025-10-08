@@ -1,5 +1,3 @@
-Perfect — this is one of the most essential topics for any **DevOps/Cloud Engineer**.
-Let’s go through each **Git concept** deeply, with **real-world explanations, command-line examples, and DevOps use cases** — including **GitOps with ArgoCD and Flux**.
 
 ---
 
@@ -434,4 +432,5 @@ Flux automatically updates and deploys your Kubernetes manifests when Git change
 
 ---
 
-Would you like me to create a **visual GitOps architecture diagram (ArgoCD + AKS + GitHub)** next — showing how code flows from commit → pipeline → GitOps → deployment → monitoring?
+<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/484b8e5d-f603-463c-92d8-a1fb1d45f315" />
+
