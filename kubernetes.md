@@ -639,3 +639,618 @@ kubectl get deployment,pods
 
 - [Kubernetes documentation: Pods](https://kubernetes.io/docs/concepts/workloads/pods/)
 - [Kubernetes documentation: Workloads](https://kubernetes.io/docs/concepts/workloads/)
+
+# Deployments in Kubernetes
+
+A **Deployment** is a Kubernetes workload resource used to manage a set of replicated Pods, normally for a **stateless application**. It provides declarative creation, scaling, rolling updates, rollback, and self-healing through ReplicaSets.
+
+## Deployment Architecture
+
+```text
+Deployment
+    |
+    | manages
+    v
+ReplicaSet
+    |
+    | creates and maintains
+    v
++---------+  +---------+  +---------+
+|  Pod 1  |  |  Pod 2  |  |  Pod 3  |
++---------+  +---------+  +---------+
+```
+
+The relationship is:
+
+1. A Deployment defines the desired application state.
+2. The Deployment controller creates a ReplicaSet.
+3. The ReplicaSet maintains the requested number of Pods.
+4. During an update, the Deployment creates a new ReplicaSet and gradually replaces the old Pods.
+
+## Common Use Cases
+
+Use a Deployment to:
+
+- Run a stateless web application or API
+- Maintain multiple identical Pod replicas
+- Replace failed or deleted Pods automatically
+- Scale an application up or down
+- Perform controlled rolling updates
+- Roll back an unsuccessful release
+- Pause and resume a rollout
+
+A Deployment is generally not the right choice when Pods require stable identities or dedicated persistent storage. Use a `StatefulSet` for those workloads.
+
+## Basic Deployment Manifest
+
+Create a file named `deployment.yaml`:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  labels:
+    app: nginx
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27
+          ports:
+            - name: http
+              containerPort: 80
+```
+
+Apply it:
+
+```bash
+kubectl apply -f deployment.yaml
+```
+
+## Important Manifest Fields
+
+### `apiVersion`
+
+```yaml
+apiVersion: apps/v1
+```
+
+Deployments belong to the `apps/v1` API group.
+
+### `metadata.name`
+
+```yaml
+metadata:
+  name: nginx-deployment
+```
+
+Defines the name of the Deployment.
+
+### `spec.replicas`
+
+```yaml
+spec:
+  replicas: 3
+```
+
+Defines the desired number of Pod replicas.
+
+### `spec.selector`
+
+```yaml
+selector:
+  matchLabels:
+    app: nginx
+```
+
+Defines which Pods are managed by the Deployment. The selector must match the labels in `spec.template.metadata.labels`.
+
+### `spec.template`
+
+```yaml
+template:
+  metadata:
+    labels:
+      app: nginx
+  spec:
+    containers:
+      - name: nginx
+        image: nginx:1.27
+```
+
+Defines the Pod template used to create new Pods.
+
+> Changing the Pod template, such as updating the image, normally triggers a new rollout. Changing only the replica count does not create a new Deployment revision.
+
+## Common Commands
+
+### List Deployments
+
+```bash
+kubectl get deployments
+```
+
+### Show Deployments, ReplicaSets, and Pods
+
+```bash
+kubectl get deployments,replicasets,pods
+```
+
+### Describe a Deployment
+
+```bash
+kubectl describe deployment nginx-deployment
+```
+
+### View the Deployment Manifest
+
+```bash
+kubectl get deployment nginx-deployment -o yaml
+```
+
+### Delete a Deployment
+
+```bash
+kubectl delete deployment nginx-deployment
+```
+
+Deleting the Deployment normally removes its managed ReplicaSets and Pods through owner-reference garbage collection.
+
+## Scaling a Deployment
+
+### Imperative Scaling
+
+```bash
+kubectl scale deployment nginx-deployment --replicas=5
+```
+
+Verify the result:
+
+```bash
+kubectl get deployment nginx-deployment
+kubectl get pods -l app=nginx
+```
+
+### Declarative Scaling
+
+Change the manifest:
+
+```yaml
+spec:
+  replicas: 5
+```
+
+Then apply it again:
+
+```bash
+kubectl apply -f deployment.yaml
+```
+
+For GitOps and production environments, declarative changes stored in version control are usually preferable.
+
+## Rolling Updates
+
+A Deployment uses `RollingUpdate` as its default update strategy. During an update, Kubernetes gradually creates Pods from a new ReplicaSet and removes Pods from the previous ReplicaSet.
+
+Update the image:
+
+```bash
+kubectl set image deployment/nginx-deployment nginx=nginx:1.28
+```
+
+Watch the rollout:
+
+```bash
+kubectl rollout status deployment/nginx-deployment
+```
+
+Watch the Pods:
+
+```bash
+kubectl get pods -l app=nginx --watch
+```
+
+## Deployment Strategies
+
+### RollingUpdate
+
+`RollingUpdate` gradually replaces old Pods with new Pods.
+
+```yaml
+spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+```
+
+- `maxUnavailable` controls how many desired Pods may be unavailable during an update.
+- `maxSurge` controls how many extra Pods may be created above the desired replica count.
+- Both fields can be absolute numbers or percentages.
+
+Example using percentages:
+
+```yaml
+spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
+```
+
+### Recreate
+
+The `Recreate` strategy terminates existing Pods before creating replacement Pods.
+
+```yaml
+spec:
+  strategy:
+    type: Recreate
+```
+
+This strategy can cause downtime and is useful only when old and new application versions must not run simultaneously.
+
+## Rollout History and Rollback
+
+### View Rollout History
+
+```bash
+kubectl rollout history deployment/nginx-deployment
+```
+
+View a particular revision:
+
+```bash
+kubectl rollout history deployment/nginx-deployment --revision=2
+```
+
+### Roll Back to the Previous Revision
+
+```bash
+kubectl rollout undo deployment/nginx-deployment
+```
+
+### Roll Back to a Specific Revision
+
+```bash
+kubectl rollout undo deployment/nginx-deployment --to-revision=2
+```
+
+### Add a Revision Change Cause
+
+Use an annotation to record the reason for a manifest-based change:
+
+```bash
+kubectl annotate deployment nginx-deployment \
+  kubernetes.io/change-cause="Upgrade nginx to 1.28" \
+  --overwrite
+```
+
+## Pausing and Resuming a Rollout
+
+Pause a Deployment before making several Pod-template changes:
+
+```bash
+kubectl rollout pause deployment/nginx-deployment
+```
+
+Make changes:
+
+```bash
+kubectl set image deployment/nginx-deployment nginx=nginx:1.28
+kubectl set resources deployment/nginx-deployment \
+  --containers=nginx \
+  --requests=cpu=100m,memory=128Mi \
+  --limits=cpu=500m,memory=256Mi
+```
+
+Resume the rollout:
+
+```bash
+kubectl rollout resume deployment/nginx-deployment
+kubectl rollout status deployment/nginx-deployment
+```
+
+## Deployment with a Service
+
+Pods are replaceable and their IP addresses can change. A Service provides a stable endpoint for the Pods selected by labels.
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+spec:
+  selector:
+    app: nginx
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27
+          ports:
+            - name: http
+              containerPort: 80
+```
+
+Apply both resources:
+
+```bash
+kubectl apply -f nginx-app.yaml
+```
+
+Check the Service and its endpoints:
+
+```bash
+kubectl get service nginx-service
+kubectl get endpointslices -l kubernetes.io/service-name=nginx-service
+```
+
+## Production-Ready Example
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-api
+  labels:
+    app: web-api
+spec:
+  replicas: 3
+  revisionHistoryLimit: 5
+  progressDeadlineSeconds: 600
+  minReadySeconds: 10
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: web-api
+  template:
+    metadata:
+      labels:
+        app: web-api
+    spec:
+      containers:
+        - name: web-api
+          image: example/web-api:1.0.0
+          ports:
+            - name: http
+              containerPort: 8080
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          startupProbe:
+            httpGet:
+              path: /health/startup
+              port: http
+            failureThreshold: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 2
+            failureThreshold: 3
+```
+
+> Replace `example/web-api:1.0.0` and the health endpoints with values appropriate for the application.
+
+## Availability Settings
+
+### `minReadySeconds`
+
+Defines how long a newly ready Pod must remain ready before Kubernetes considers it available.
+
+```yaml
+spec:
+  minReadySeconds: 10
+```
+
+### `progressDeadlineSeconds`
+
+Defines how long Kubernetes waits for rollout progress before reporting that the Deployment has exceeded its progress deadline.
+
+```yaml
+spec:
+  progressDeadlineSeconds: 600
+```
+
+### `revisionHistoryLimit`
+
+Controls how many old ReplicaSets are retained for rollback.
+
+```yaml
+spec:
+  revisionHistoryLimit: 5
+```
+
+## Troubleshooting Deployments
+
+### Deployment Is Not Ready
+
+```bash
+kubectl get deployment nginx-deployment
+kubectl describe deployment nginx-deployment
+kubectl get replicasets
+kubectl get pods -l app=nginx -o wide
+```
+
+Look for:
+
+- Unavailable replicas
+- Failed scheduling
+- Image pull errors
+- Crashing containers
+- Failing health probes
+- Insufficient CPU or memory
+
+### Rollout Is Stuck
+
+```bash
+kubectl rollout status deployment/nginx-deployment
+kubectl describe deployment nginx-deployment
+kubectl get events --sort-by=.metadata.creationTimestamp
+```
+
+Inspect the new ReplicaSet and its Pods:
+
+```bash
+kubectl get replicasets
+kubectl describe replicaset <new-replicaset-name>
+kubectl describe pod <pod-name>
+```
+
+### Container Is Crashing
+
+```bash
+kubectl logs <pod-name> -c <container-name>
+kubectl logs <pod-name> -c <container-name> --previous
+```
+
+### Image Cannot Be Pulled
+
+```bash
+kubectl describe pod <pod-name>
+```
+
+Check:
+
+- Image repository and tag
+- Registry credentials
+- `imagePullSecrets`
+- Node-to-registry connectivity
+- Image availability for the node architecture
+
+### Selector Does Not Match Pod Labels
+
+Ensure these values match:
+
+```yaml
+spec:
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+```
+
+The selector of an existing `apps/v1` Deployment is immutable, so correcting it may require creating a new Deployment.
+
+## Useful Diagnostic Commands
+
+```bash
+kubectl get deployment nginx-deployment -o wide
+kubectl get replicaset --show-labels
+kubectl get pods -l app=nginx --show-labels
+kubectl describe deployment nginx-deployment
+kubectl rollout status deployment/nginx-deployment
+kubectl rollout history deployment/nginx-deployment
+kubectl get events --sort-by=.metadata.creationTimestamp
+```
+
+## Deployment vs Other Workload Resources
+
+### Deployment
+
+Use for stateless, interchangeable application Pods.
+
+### StatefulSet
+
+Use when Pods require stable identities, ordered operations, or stable persistent storage relationships.
+
+### DaemonSet
+
+Use when a Pod should run on every applicable node, such as a monitoring, networking, or logging agent.
+
+### Job
+
+Use for a one-time workload that runs to completion.
+
+### CronJob
+
+Use for a scheduled workload that creates Jobs.
+
+## Best Practices
+
+- Use Deployments for stateless applications.
+- Store manifests in source control.
+- Use immutable, versioned image tags instead of `latest`.
+- Configure CPU and memory requests and limits.
+- Define startup, readiness, and liveness probes appropriately.
+- Use multiple replicas for availability.
+- Tune `maxUnavailable` and `maxSurge` for rollout requirements.
+- Use a Service to provide stable access to Deployment Pods.
+- Check rollout status in CI/CD pipelines.
+- Keep enough revision history to support rollback.
+- Use PodDisruptionBudgets and topology-spread controls where availability requirements justify them.
+- Avoid manually modifying ReplicaSets owned by a Deployment.
+
+## Summary
+
+```text
+Deployment
+├── Declares the desired application state
+├── Manages ReplicaSets
+├── Maintains the requested Pod replicas
+├── Supports scaling
+├── Performs rolling updates
+├── Supports rollback
+└── Replaces failed Pods indirectly through ReplicaSets
+```
+
+A Deployment is the standard Kubernetes workload resource for running and updating stateless applications whose Pods are interchangeable.
+
+## References
+
+- [Kubernetes documentation: Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/)
+- [Kubernetes documentation: Workloads](https://kubernetes.io/docs/concepts/workloads/)
+- [Kubernetes documentation: Workload Management](https://kubernetes.io/docs/concepts/workloads/controllers/)
+
